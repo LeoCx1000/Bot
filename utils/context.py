@@ -1,81 +1,48 @@
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import discord
-from discord import PartialEmoji
 from discord.ext import commands
 
-from . import views
+from .views import DeleteView
 
-BASE_KWARGS: dict[str, Any] = {
-    "content": None,
-    "embeds": [],
-    "attachments": [],
-    "suppress": False,
-    "delete_after": None,
-    "view": None,
-}
+if TYPE_CHECKING:
+    from bot import AloneBot
 
 
-class _Emojis:
-    x = PartialEmoji(name="cross", id=1019436205269602354)
-    check = PartialEmoji(name="tick", id=1019436222260723744)
-    slash = PartialEmoji(name="slash", id=1041021694682349569)
-
-
-class AloneContext(commands.Context[Any]):
+class AloneContext(commands.Context["AloneBot"]):
     async def send(
         self,
         content: str | None = None,
         add_button_view: bool = True,
         **kwargs: Any,
-    ):
-        embed: Optional[discord.Embed] = kwargs.get("embed")
-        if embed:
-            if not embed.color:
-                embed.color = discord.Color.random()
-
-            if not embed.footer:
+    ) -> discord.Message:
+        for embed in kwargs.get("embeds", []):
+            embed.colour = embed.colour or self.author.color
+            embed.timestamp = embed.timestamp or discord.utils.utcnow()
+            if not embed.footer.text:
                 embed.set_footer(
                     text=f"Command ran by {self.author.display_name}",
-                    icon_url=self.author.display_avatar,
+                    icon_url=self.author.display_avatar.url,
                 )
 
-            if not embed.timestamp:
-                embed.timestamp = discord.utils.utcnow()
+        if self.command and (self.command.root_parent or self.command).name == "jishaku":
+            return await super().send(content, **kwargs)
 
         if add_button_view:
-            _view: discord.ui.View | None = kwargs.get("view")
-            if not _view:
-                kwargs["view"] = views.DeleteView(self)
-            else:
-                view = kwargs["view"] = views.DeleteView(self)
-                view.add_item(_view.children[0])
+            delete_button = DeleteView(self.author.id).children[0]
+            original_view = kwargs.get("view") or discord.ui.View()
+            if original_view:
+                original_view.add_item(delete_button)
 
-        if not self.bot.bot_messages_cache.get(self.message):
-            self.bot.bot_messages_cache[self.message] = message = await super().send(content, **kwargs)
-            return message
-        else:
-            message = self.bot.bot_messages_cache.get(self.message)
-            edit_kwargs = {key: value for key, value in kwargs.items() if key in BASE_KWARGS}
-            edit_kwargs["content"] = content
-            edit_kwargs["embeds"] = (kwargs.pop("embeds", [])) or (
-                [kwargs.pop("embed")] if kwargs.get("embed", None) else []
-            )
+            kwargs["view"] = original_view
 
-            try:
-                self.bot.bot_messages_cache[self.message] = message = await self.bot.bot_messages_cache[self.message].edit(
-                    **edit_kwargs
-                )
-                return message
-            except discord.HTTPException:
-                self.bot.bot_messages_cache[self.message] = message = await super().send(content, **kwargs)
-                return message
+        return await super().send(content, **kwargs)
 
-    async def reply(self, content: Optional[str] = None, **kwargs: Any) -> discord.Message:
-        return await super().reply(content, mention_author=False, **kwargs)
+    @property
+    def emojis(self) -> dict[str, discord.Emoji]:
+        return self.bot.EMOJIS
 
-    async def create_codeblock(self, content: str):
-        fmt = "`" * 3
-        return f"{fmt}py\n{content}{fmt}"
-
-    Emojis = _Emojis()
+    def get_emoji(self, name: str) -> discord.Emoji:
+        return self.bot.EMOJIS[name]
